@@ -1,0 +1,20 @@
+name: Rakuten Availability Check
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # 毎日午前9時（日本時間）に実行（UTC 0時）
+  workflow_dispatch:  # 手動実行も可能にする
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install requests beautifulsoup4
+      - name: Run checker script
+        run: python checker.py
