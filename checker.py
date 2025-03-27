@@ -1,46 +1,32 @@
 import datetime
+import json
 import os
 
 import requests
-from bs4 import BeautifulSoup
 
 # 環境変数から取得
-URL = os.getenv('RAKUTEN_URL')
-SENDER_EMAIL = os.getenv('SENDER_EMAIL')
-RECIPIENT_EMAIL = os.getenv('RECIPIENT_EMAIL')
-BREVO_API_KEY = os.getenv('BREVO_API_KEY')
+APP_ID = os.getenv("RAKUTEN_APP_ID")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+BREVO_API_KEY = os.getenv("BREVO_API_KEY")
 
-# 空室があることを示すマーク
-AVAILABLE_MARK = '○'
+# 宿泊施設情報
+HOTEL_NO = "136902"
+CHECKIN_DATE = "2025-05-18"
+CHECKOUT_DATE = "2025-05-19"
+ADULT_NUM = 1
+HOTEL_URL = f"https://hotel.travel.rakuten.co.jp/hinfo/{HOTEL_NO}/"
 
-# テスト用（5月を監視対象に設定）
-TARGET_MONTHS = ['2025年5月']
-# 本番用（7月〜9月）に戻す場合はこちらを使用
-# TARGET_MONTHS = ['2025年7月', '2025年8月', '2025年9月']
+API_URL = "https://app.rakuten.co.jp/services/api/Travel/VacantHotelSearch/20170426"
 
-def check_calendar_availability(url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    res = requests.get(url, headers=headers)
-    res.encoding = 'UTF-8'
-
-    if res.status_code != 200:
-        return False, []
-
-    soup = BeautifulSoup(res.text, 'html.parser')
-    available_dates = []
-
-    for month in TARGET_MONTHS:
-        month_section = soup.find('div', string=month)
-        if month_section:
-            calendar = month_section.find_next('table')
-            if calendar:
-                days = calendar.find_all('td')
-                for day in days:
-                    if AVAILABLE_MARK in day.text:
-                        date = day.text.strip().replace(AVAILABLE_MARK, '').strip()
-                        available_dates.append(f"{month} {date}日")
-
-    return len(available_dates) > 0, available_dates
+params = {
+    "applicationId": APP_ID,
+    "hotelNo": HOTEL_NO,
+    "checkinDate": CHECKIN_DATE,
+    "checkoutDate": CHECKOUT_DATE,
+    "adultNum": ADULT_NUM,
+    "format": "json"
+}
 
 def send_email(subject, content):
     url = "https://api.brevo.com/v3/smtp/email"
@@ -55,15 +41,49 @@ def send_email(subject, content):
         "subject": subject,
         "htmlContent": content
     }
-    requests.post(url, json=data, headers=headers)
+    response = requests.post(url, json=data, headers=headers)
+    if response.status_code != 201:
+        print("❌ メール送信失敗:", response.status_code, response.text)
+    else:
+        print("📧 メール送信成功")
 
-if __name__ == "__main__":
-    has_availability, dates = check_calendar_availability(URL)
-    if has_availability:
-        now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        subject = "【楽天トラベル】宿泊可能な日程があります！（テスト）"
-        content = f"<p>{now}現在、以下の日程で宿泊予約可能です（テスト用）：</p><ul>"
-        for date in dates:
-            content += f"<li>{date}</li>"
-        content += f"</ul><p><a href='{URL}'>予約ページへ進む</a></p>"
-        send_email(subject, content)
+response = requests.get(API_URL, params=params)
+
+if response.status_code == 200:
+    data = response.json()
+    hotels = data.get("hotels", [])
+
+    if hotels:
+        print("✅ 宿泊可能なプランが見つかりました！")
+        for hotel in hotels:
+            try:
+                hotel_info = hotel["hotel"][0]["hotelBasicInfo"]
+                room_info = hotel["hotel"][1]["roomInfo"][0]["roomBasicInfo"]
+                daily_charge = hotel["hotel"][1]["roomInfo"][1]["dailyCharge"]["total"]
+
+                print(f"🏨 {hotel_info['hotelName']}")
+                print(f"🛏 {room_info['planName']}")
+                print(f"💰 {daily_charge}円")
+                print("-" * 40)
+
+                # メール通知内容
+                now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                subject = f"【楽天】{CHECKIN_DATE} 宿泊可能なプランがあります！"
+                content = f"""
+                    <p>{now} に宿泊可能なプランが見つかりました。</p>
+                    <ul>
+                      <li>🏨 ホテル名: {hotel_info['hotelName']}</li>
+                      <li>🛏 プラン: {room_info['planName']}</li>
+                      <li>💰 料金: {daily_charge}円</li>
+                      <li>📍 アクセス: {hotel_info['access']}</li>
+                    </ul>
+                    <p><a href='{HOTEL_URL}'>▶ ご予約ページへ</a></p>
+                """
+                send_email(subject, content)
+
+            except (KeyError, IndexError, TypeError) as e:
+                print(f"⚠️ 情報取得エラー: {e}")
+    else:
+        print("❌ 空室なし")
+else:
+    print(f"❌ APIエラー: ステータスコード {response.status_code}")
