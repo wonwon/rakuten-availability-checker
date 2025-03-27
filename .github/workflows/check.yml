@@ -16,6 +16,10 @@ jobs:
           python-version: '3.x'
       - name: Install dependencies
         run: pip install requests beautifulsoup4
+      - name: Debug file structure
+        run: |
+          pwd
+          ls -la
       - name: Run checker script
         env:
           BREVO_API_KEY: ${{ secrets.BREVO_API_KEY }}
